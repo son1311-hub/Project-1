@@ -60,7 +60,7 @@ try:
     print(f"==> KẾT QUẢ VECTOR: patient_vector = {patient_vector}")
     print("------------------------------------------------\n")
     
-    print("[+] Đang khởi tạo hệ thống toán học FHE...")
+    print("[+] Đang khởi tạo hệ thống toán học FHE (Gồm Secret Key & Galois Keys)...")
     context = ts.context(ts.SCHEME_TYPE.CKKS, poly_modulus_degree=8192, coeff_mod_bit_sizes=[60, 40, 40, 60])
     context.global_scale = 2**40
     context.generate_galois_keys()
@@ -69,24 +69,33 @@ try:
     with open("cloud_fhe_data.bin", "wb") as f:
         f.write(encrypted_fhe_data.serialize())
     
+    # 1. Lưu trữ Secret Key tại Local bằng AES
     mat_khau_fhe = getpass.getpass(">> [Ẩn] Thiết lập mật khẩu bảo vệ Secret Key FHE: ")
     secret_context = context.serialize(save_secret_key=True)
     fhe_aes_cipher = get_aes_key(mat_khau_fhe, b'salt_for_fhe_key')
     with open("locked_fhe_sk.enc", "wb") as f:
         f.write(fhe_aes_cipher.encrypt(secret_context))
         
-    print("[+] Đã mã hóa FHE và khóa Secret Key thành công!\n")
+    # 2. Xóa Secret Key khỏi Context và xuất Public Context (chứa Galois Keys) ra file cho Cloud
+    context.make_context_public() 
+    with open("cloud_context.bin", "wb") as f:
+        f.write(context.serialize())
+        
+    print("[+] Đã mã hóa FHE, lưu Secret Key (Local) và xuất Public Context (Cloud) thành công!\n")
 
 except Exception as e:
-    print("[-] SAI MẬT KHẨU AES!")
+    print("[-] SAI MẬT KHẨU AES hoặc có lỗi xảy ra!")
+    print(e)
     exit()
 
 
 print("="*65)
 print("PHASE 2: HÀM TÍNH TOÁN TRÊN ĐÁM MÂY (CLOUD COMPUTING)")
 print("="*65)
-context.make_context_public()
-cloud_context = ts.context_from(context.serialize())
+# Cloud không biết gì về môi trường Local, chỉ nạp Context và Data từ file đã được "upload"
+with open("cloud_context.bin", "rb") as f:
+    cloud_context = ts.context_from(f.read())
+print(f"[*] Cloud xác nhận đã nhận được Galois Key: {cloud_context.has_galois_keys()}")
 with open("cloud_fhe_data.bin", "rb") as f:
     cloud_data = ts.ckks_vector_from(cloud_context, f.read())
 
@@ -121,17 +130,18 @@ try:
     final_score = result_encrypted.decrypt()
     
     # ---------------------------------------------------------
-    # PHẦN HIỂN THỊ KẾT QUẢ MỚI: KẾT HỢP HỒ SƠ GỐC VÀ ĐIỂM SỐ AI
+    # PHẦN HIỂN THỊ KẾT QUẢ
     # ---------------------------------------------------------
     print("\n\n" + "*"*50)
     print("      BÁO CÁO Y TẾ & ĐÁNH GIÁ TỪ ĐÁM MÂY")
     print("*"*50)
     print("[THÔNG TIN HỒ SƠ BỆNH NHÂN]")
-    print(decrypted_text.strip()) # In lại toàn bộ nội dung file Patient.txt đã giải mã ở Phase 1
+    print(decrypted_text.strip()) 
     print("-" * 50)
     print(f"[ĐÁNH GIÁ TỪ AI ĐÁM MÂY (ĐÃ GIẢI MÃ FHE)]")
     print(f"==> Nguy cơ đột quỵ: {round(final_score[0], 2)} / 100")
     print("*"*50 + "\n")
 
 except Exception as e:
+    print("[-] SAI MẬT KHẨU FHE! Không thể giải mã.")
     print("[-] SAI MẬT KHẨU FHE! Không thể giải mã.")
